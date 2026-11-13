@@ -1,0 +1,113 @@
+﻿name: build-ipa
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_pack:
+        description: "Also download the 922MB pack inside CI (slow from CN; pack is normally injected on the server after build)"
+        type: boolean
+        default: false
+      note:
+        description: "Optional note, appended to the ipa file name"
+        type: string
+        default: ""
+
+concurrency:
+  group: build-ipa
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 180
+    env:
+      PACK_BASE: http://118.89.182.49:81/pack
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare web pack
+        run: |
+          set -euo pipefail
+          mkdir -p ios/Resources/WebPack
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 20 \
+            -o ios/Resources/WebPack/web-index.json "$PACK_BASE/web-index.json"
+          if [ "${{ inputs.with_pack }}" = "true" ]; then
+            echo "downloading 922MB pack ..."
+            curl -fL --retry 5 --retry-all-errors --connect-timeout 20 \
+              --speed-time 180 --speed-limit 5120 \
+              -o ios/Resources/WebPack/web-static.pack "$PACK_BASE/web-static.pack"
+          else
+            echo "skip pack (compile check only)"
+            : > ios/Resources/WebPack/web-static.pack
+          fi
+          ls -lh ios/Resources/WebPack
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          sw_vers
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios/ZXR.xcodeproj \
+            -scheme ZXR \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO \
+            ARCHS=arm64 \
+            build 2>&1 | tail -n 150
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          echo "APP=$APP"
+          ls -lh "$APP"
+          du -sh "$APP"
+          rm -rf out && mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          NOTE="${{ inputs.note }}"
+          NAME="zxr-ios-unsigned${NOTE:+-$NOTE}.ipa"
+          (cd out && zip -qry "../$NAME" Payload)
+          ls -lh "$NAME"
+          echo "IPA_NAME=$NAME" >> "$GITHUB_ENV"
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.ZXR_SSH_KEY }}" > ~/.ssh/id_ci
+          chmod 600 ~/.ssh/id_ci
+          ssh-keyscan -H 118.89.182.49 >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Upload to server
+        continue-on-error: true
+        run: |
+          ssh -i ~/.ssh/id_ci -o BatchMode=yes root@118.89.182.49 "mkdir -p /data/zhengxiere/site/ipa"
+          scp -i ~/.ssh/id_ci "$IPA_NAME" root@118.89.182.49:/data/zhengxiere/site/ipa/
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Build result" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$IPA_NAME" ]; then
+            echo "- IPA: \`$IPA_NAME\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- size: $(du -h "$IPA_NAME" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- sha256: \`$(shasum -a 256 "$IPA_NAME" | cut -d' ' -f1)\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- no ipa produced, check the log above" >> "$GITHUB_STEP_SUMMARY"
+          fi

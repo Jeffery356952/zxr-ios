@@ -1,0 +1,64 @@
+﻿name: ZXR
+options:
+  bundleIdPrefix: com.zhenxieren
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "15.0"
+
+targets:
+  ZXR:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources/Assets.xcassets
+      - path: Resources/WebPack
+        type: folder
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_BUNDLE_IDENTIFIER: com.zhenxieren.zxr
+        PRODUCT_NAME: ZXR
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "2026111401"
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        SUPPORTS_MACCATALYST: NO
+        ENABLE_BITCODE: NO
+        SWIFT_STRICT_CONCURRENCY: minimal
+        CODE_SIGN_STYLE: Manual
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: 闀囬偑浜?
+        CFBundleName: ZXR
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "1.1.0"
+        CFBundleVersion: "2026111401"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSExceptionDomains:
+            118.89.182.49:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+            127.0.0.1:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+        UIRequiredDeviceCapabilities:
+          - arm64
+

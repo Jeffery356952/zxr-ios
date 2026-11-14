@@ -109,7 +109,6 @@ final class HTTPConnection {
     private var isUpgraded = false
 
     private static let headerLimit = 128 * 1024
-    private static let chunkSize = 1 << 20
 
     init(connection: NWConnection) {
         self.connection = connection
@@ -223,50 +222,54 @@ final class HTTPConnection {
     }
 
     private func servePack(request: Request, path: String, entry: PackEntry) {
-        var status = 200
         var offset: Int64 = 0
         var length = entry.size
-        var extraHeaders: [String] = []
+        var partial = false
 
         if let rangeHeader = request.headers["range"],
            let ranged = Self.parseRange(rangeHeader, size: entry.size) {
-            status = 206
+            partial = true
             offset = ranged.0
             length = ranged.1
-            extraHeaders.append("Content-Range: bytes \(offset)-\(offset + Int64(length) - 1)/\(entry.size)")
         }
 
+        // 整块读出再一次性发送：避免分块发送中途失败造成"半截脚本"
+        guard let body = PackStore.shared.read(path: path, offset: offset, length: length) else {
+            // 包内读取失败就回源，绝不返回残缺内容
+            proxy(request: request)
+            return
+        }
+
+        let status = partial ? 206 : 200
         var head = "HTTP/1.1 \(status) \(Self.reason(status))\r\n"
-        head += "Content-Type: \(entry.mime)\r\n"
-        head += "Content-Length: \(length)\r\n"
+        head += "Content-Type: \(Self.mimeWithCharset(entry.mime))\r\n"
+        head += "Content-Length: \(request.method == "HEAD" ? 0 : body.count)\r\n"
         head += "Accept-Ranges: bytes\r\n"
         head += "Cache-Control: no-store\r\n"
+        head += "X-ZXR-Resource: apk-local\r\n"
         head += "Connection: close\r\n"
-        for line in extraHeaders { head += line + "\r\n" }
+        if partial {
+            head += "Content-Range: bytes \(offset)-\(offset + Int64(body.count) - 1)/\(entry.size)\r\n"
+        }
         head += "\r\n"
 
-        let headData = Data(head.utf8)
-        if request.method == "HEAD" || length == 0 {
-            send(data: headData) { [weak self] _ in self?.close() }
-            return
+        var payload = Data(head.utf8)
+        if request.method != "HEAD" {
+            payload.append(body)
         }
-        send(data: headData) { [weak self] ok in
-            guard let self, ok else { self?.close(); return }
-            self.sendPackBody(path: path, offset: offset, remaining: length)
-        }
+        send(data: payload) { [weak self] _ in self?.close() }
     }
 
-    private func sendPackBody(path: String, offset: Int64, remaining: Int) {
-        if remaining <= 0 { close(); return }
-        let count = min(remaining, Self.chunkSize)
-        guard let chunk = PackStore.shared.read(path: path, offset: offset, length: count), !chunk.isEmpty else {
-            close()
-            return
+    /// 文本类资源补上 charset，避免 WebView 用错编码解码 JS/JSON
+    private static func mimeWithCharset(_ mime: String) -> String {
+        let lower = mime.lowercased()
+        if lower.hasPrefix("text/")
+            || lower == "application/javascript"
+            || lower == "application/json"
+            || lower == "application/x-javascript" {
+            return mime + "; charset=utf-8"
         }
-        send(data: chunk) { [weak self] ok in
-            guard let self, ok else { self?.close(); return }
-            self.sendPackBody(path: path, offset: offset + Int64(chunk.count), remaining: remaining - chunk.count)
-        }
+        return mime
     }
 
     private static func parseRange(_ header: String, size: Int) -> (Int64, Int)? {
